@@ -33,6 +33,7 @@ async function run() {
 
     const myDB = client.db("arts-hub");
     const artworkCollection = myDB.collection("artworks");
+    const userCollection = myDB.collection("user");
 
     // Artwork api
     app.post("/api/artworks", async (req, res) => {
@@ -62,52 +63,52 @@ async function run() {
     });
 
     app.get("/api/artworks", async (req, res) => {
-  try {
-    const { artistId, category, search, sortByPrice } = req.query;
+      try {
+        const { artistId, category, search, sortByPrice } = req.query;
 
-    const query = {};
+        const query = {};
 
-    if (artistId) {
-      query.artistId = artistId;
-    }
+        if (artistId) {
+          query.artistId = artistId;
+        }
 
-    if (category && category !== "all") {
-      query.category = category;
-    }
+        if (category && category !== "all") {
+          query.category = category;
+        }
 
-    if (search) {
-      query.$or = [
-        { title: { $regex: search, $options: "i" } },
-        { artistName: { $regex: search, $options: "i" } },
-      ];
-    }
+        if (search) {
+          query.$or = [
+            { title: { $regex: search, $options: "i" } },
+            { artistName: { $regex: search, $options: "i" } },
+          ];
+        }
 
-    let sortOption = { createdAt: -1 }; // default newest first
+        let sortOption = { createdAt: -1 }; // default newest first
 
-    if (sortByPrice === "asc") {
-      sortOption = { price: 1 };
-    } else if (sortByPrice === "desc") {
-      sortOption = { price: -1 };
-    }
+        if (sortByPrice === "asc") {
+          sortOption = { price: 1 };
+        } else if (sortByPrice === "desc") {
+          sortOption = { price: -1 };
+        }
 
-    const artworks = await artworkCollection
-      .find(query)
-      .sort(sortOption)
-      .toArray();
+        const artworks = await artworkCollection
+          .find(query)
+          .sort(sortOption)
+          .toArray();
 
-    res.send({
-      success: true,
-      count: artworks.length,
-      data: artworks,
+        res.send({
+          success: true,
+          count: artworks.length,
+          data: artworks,
+        });
+      } catch (error) {
+        console.error(error);
+        res.status(500).send({
+          success: false,
+          message: "Failed to fetch artworks",
+        });
+      }
     });
-  } catch (error) {
-    console.error(error);
-    res.status(500).send({
-      success: false,
-      message: "Failed to fetch artworks",
-    });
-  }
-});
 
     app.patch("/api/artworks/:id", async (req, res) => {
       try {
@@ -201,6 +202,47 @@ async function run() {
       }
     });
 
+    app.get("/api/top-artist", async (req, res) => {
+      const result = await artworkCollection
+        .aggregate([
+          {
+            $group: {
+              _id: "$artistId",
+              totalArtworks: { $sum: 1 },
+              artistName: { $first: "$artistName" },
+            },
+          },
+          { $sort: { totalArtworks: -1 } },
+        ])
+        .toArray();
+      res.send(result);
+    });
+
+    // Users api
+    app.get("/api/users", async (req, res) => {
+      try {
+        const { role } = req.query;
+
+        const query = {};
+
+        if (role) {
+          query.role = role;
+        }
+
+        const users = await userCollection.find(query).toArray();
+
+        res.send({
+          success: true,
+          count: users.length,
+          data: users,
+        });
+      } catch (error) {
+        res.status(500).send({
+          success: false,
+          message: "Failed to fetch users",
+        });
+      }
+    });
 
     console.log(
       "Pinged your deployment. You successfully connected to MongoDB!",
