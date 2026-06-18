@@ -62,33 +62,52 @@ async function run() {
     });
 
     app.get("/api/artworks", async (req, res) => {
-      try {
-        const { artistId } = req.query;
+  try {
+    const { artistId, category, search, sortByPrice } = req.query;
 
-        const query = {};
+    const query = {};
 
-        if (artistId) {
-          query.artistId = artistId;
-        }
+    if (artistId) {
+      query.artistId = artistId;
+    }
 
-        const artworks = await artworkCollection
-          .find(query)
-          .sort({ createdAt: -1 }) // 👈 newest first
-          .toArray();
+    if (category && category !== "all") {
+      query.category = category;
+    }
 
-        res.send({
-          success: true,
-          count: artworks.length,
-          data: artworks,
-        });
-      } catch (error) {
-        console.error(error);
-        res.status(500).send({
-          success: false,
-          message: "Failed to fetch artworks",
-        });
-      }
+    if (search) {
+      query.$or = [
+        { title: { $regex: search, $options: "i" } },
+        { artistName: { $regex: search, $options: "i" } },
+      ];
+    }
+
+    let sortOption = { createdAt: -1 }; // default newest first
+
+    if (sortByPrice === "asc") {
+      sortOption = { price: 1 };
+    } else if (sortByPrice === "desc") {
+      sortOption = { price: -1 };
+    }
+
+    const artworks = await artworkCollection
+      .find(query)
+      .sort(sortOption)
+      .toArray();
+
+    res.send({
+      success: true,
+      count: artworks.length,
+      data: artworks,
     });
+  } catch (error) {
+    console.error(error);
+    res.status(500).send({
+      success: false,
+      message: "Failed to fetch artworks",
+    });
+  }
+});
 
     app.patch("/api/artworks/:id", async (req, res) => {
       try {
