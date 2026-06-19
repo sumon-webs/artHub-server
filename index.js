@@ -35,6 +35,7 @@ async function run() {
     const artworkCollection = myDB.collection("artworks");
     const userCollection = myDB.collection("user");
     const orderCollection = myDB.collection("order");
+    const commentCollection = myDB.collection("comments");
 
     // Artwork api
     app.post("/api/artworks", async (req, res) => {
@@ -150,15 +151,17 @@ async function run() {
     app.delete("/api/artworks/:id", async (req, res) => {
       try {
         const { id } = req.params;
+        const { artistId } = req.body;
 
         const result = await artworkCollection.deleteOne({
           _id: new ObjectId(id),
+          artistId: artistId,
         });
 
         if (result.deletedCount === 0) {
-          return res.status(404).send({
+          return res.status(403).send({
             success: false,
-            message: "Artwork not found",
+            message: "Not allowed or artwork not found",
           });
         }
 
@@ -169,6 +172,7 @@ async function run() {
         });
       } catch (error) {
         console.error(error);
+
         res.status(500).send({
           success: false,
           message: "Failed to delete artwork",
@@ -203,20 +207,51 @@ async function run() {
       }
     });
 
+    // Top artist api
     app.get("/api/top-artist", async (req, res) => {
-      const result = await artworkCollection
-        .aggregate([
-          {
-            $group: {
-              _id: "$artistId",
-              totalArtworks: { $sum: 1 },
-              artistName: { $first: "$artistName" },
+      try {
+        const { artistId } = req.query;
+
+        const matchStage = {};
+
+        if (artistId) {
+          matchStage.artistId = artistId;
+        }
+
+        const result = await artworkCollection
+          .aggregate([
+            // 1. optional filter
+            {
+              $match: matchStage,
             },
-          },
-          { $sort: { totalArtworks: -1 } },
-        ])
-        .toArray();
-      res.send(result);
+
+            // 2. group by artist
+            {
+              $group: {
+                _id: "$artistId",
+                totalArtworks: { $sum: 1 },
+                artistName: { $first: "$artistName" },
+              },
+            },
+
+            // 3. sort
+            {
+              $sort: { totalArtworks: -1 },
+            },
+          ])
+          .toArray();
+
+        res.send({
+          success: true,
+          data: result,
+        });
+      } catch (error) {
+        console.error(error);
+        res.status(500).send({
+          success: false,
+          message: "Failed to fetch top artist",
+        });
+      }
     });
 
     // Users api
@@ -354,6 +389,95 @@ async function run() {
       }
     });
 
+    // Comment api
+    app.post("/api/comments", async (req, res) => {
+      try {
+        const comment = req.body;
+
+        if (!comment.artworkId || !comment.text) {
+          return res.status(400).send({
+            success: false,
+            message: "artworkId and text are required",
+          });
+        }
+
+        comment.createdAt = new Date();
+
+        const result = await commentCollection.insertOne(comment);
+
+        res.send({
+          success: true,
+          message: "Comment added successfully",
+          insertedId: result.insertedId,
+        });
+      } catch (error) {
+        console.error(error);
+
+        res.status(500).send({
+          success: false,
+          message: "Failed to add comment",
+        });
+      }
+    });
+
+    app.get("/api/comments", async (req, res) => {
+      try {
+        const { artworkId } = req.query;
+
+        const query = {};
+
+        if (artworkId) {
+          query.artworkId = artworkId;
+        }
+
+        const comments = await commentCollection
+          .find(query)
+          .sort({ createdAt: -1 })
+          .toArray();
+
+        res.send({
+          success: true,
+          count: comments.length,
+          data: comments,
+        });
+      } catch (error) {
+        console.error(error);
+
+        res.status(500).send({
+          success: false,
+          message: "Failed to fetch comments",
+        });
+      }
+    });
+
+    app.delete("/api/comments/:id", async (req, res) => {
+      try {
+        const { id } = req.params;
+
+        const result = await commentCollection.deleteOne({
+          _id: new ObjectId(id),
+        });
+
+        if (result.deletedCount === 0) {
+          return res.status(404).send({
+            success: false,
+            message: "Comment not found",
+          });
+        }
+
+        res.send({
+          success: true,
+          message: "Comment deleted successfully",
+        });
+      } catch (error) {
+        console.error(error);
+
+        res.status(500).send({
+          success: false,
+          message: "Failed to delete comment",
+        });
+      }
+    });
     console.log(
       "Pinged your deployment. You successfully connected to MongoDB!",
     );
