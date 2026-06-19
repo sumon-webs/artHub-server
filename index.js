@@ -338,6 +338,36 @@ async function run() {
       }
     });
 
+  
+    app.get("/api/orders/:id", async (req, res) => {
+      try {
+        const { id } = req.params;
+
+        const order = await orderCollection.findOne({
+          _id: new ObjectId(id),
+        });
+
+        if (!order) {
+          return res.status(404).send({
+            success: false,
+            message: "Order not found",
+          });
+        }
+
+        res.send({
+          success: true,
+          data: order,
+        });
+      } catch (error) {
+        console.error(error);
+
+        res.status(500).send({
+          success: false,
+          message: "Failed to fetch order",
+        });
+      }
+    });
+
     // Top selling api
     app.get("/api/top-selling-artists", async (req, res) => {
       try {
