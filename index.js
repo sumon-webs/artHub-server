@@ -244,6 +244,64 @@ async function run() {
       }
     });
 
+    // Order api
+    app.post("/api/orders", async (req, res) => {
+      try {
+        const order = req.body;
+
+        order.createdAt = new Date();
+
+        const result = await orderCollection.insertOne(order);
+
+        res.send({
+          success: true,
+          message: "Order created successfully",
+          insertedId: result.insertedId,
+        });
+      } catch (error) {
+        console.error(error);
+
+        res.status(500).send({
+          success: false,
+          message: "Failed to create order",
+        });
+      }
+    });
+
+    app.get("/api/orders", async (req, res) => {
+      try {
+        const { buyerId, artistId } = req.query;
+
+        const query = {};
+
+        if (buyerId) {
+          query.buyerId = buyerId;
+        }
+
+        if (artistId) {
+          query.artistId = artistId;
+        }
+
+        const orders = await orderCollection
+          .find(query)
+          .sort({ createdAt: -1 })
+          .toArray();
+
+        res.send({
+          success: true,
+          count: orders.length,
+          data: orders,
+        });
+      } catch (error) {
+        console.error(error);
+
+        res.status(500).send({
+          success: false,
+          message: "Failed to fetch orders",
+        });
+      }
+    });
+
     console.log(
       "Pinged your deployment. You successfully connected to MongoDB!",
     );
