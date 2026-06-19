@@ -34,6 +34,7 @@ async function run() {
     const myDB = client.db("arts-hub");
     const artworkCollection = myDB.collection("artworks");
     const userCollection = myDB.collection("user");
+    const orderCollection = myDB.collection("order");
 
     // Artwork api
     app.post("/api/artworks", async (req, res) => {
@@ -298,6 +299,57 @@ async function run() {
         res.status(500).send({
           success: false,
           message: "Failed to fetch orders",
+        });
+      }
+    });
+
+    // Top selling api
+    app.get("/api/top-selling-artists", async (req, res) => {
+      try {
+        const { artistId } = req.query;
+
+        const matchStage = {};
+
+        if (artistId) {
+          matchStage.artistId = artistId;
+        }
+
+        const result = await orderCollection
+          .aggregate([
+            // 1. filter stage (optional)
+            {
+              $match: matchStage,
+            },
+
+            // 2. group stage
+            {
+              $group: {
+                _id: "$artistId",
+                artistName: { $first: "$artistName" },
+                totalSales: { $sum: 1 },
+                totalRevenue: {
+                  $sum: { $toDouble: "$price" },
+                },
+              },
+            },
+
+            // 3. sort
+            {
+              $sort: { totalSales: -1 },
+            },
+          ])
+          .toArray();
+
+        res.send({
+          success: true,
+          data: result,
+        });
+      } catch (error) {
+        console.error(error);
+
+        res.status(500).send({
+          success: false,
+          message: "Failed to fetch top selling artists",
         });
       }
     });
