@@ -35,7 +35,9 @@ async function run() {
     const artworkCollection = myDB.collection("artworks");
     const userCollection = myDB.collection("user");
     const orderCollection = myDB.collection("order");
+    const planPurchaseCollection = myDB.collection("planPurchases");
     const commentCollection = myDB.collection("comments");
+    const planCollection = myDB.collection("plans");
 
     // Artwork api
     app.post("/api/artworks", async (req, res) => {
@@ -280,6 +282,76 @@ async function run() {
       }
     });
 
+    app.get("/api/users/:id", async (req, res) => {
+      try {
+        const { id } = req.params;
+
+        const user = await userCollection.findOne({
+          _id: new ObjectId(id),
+        });
+
+        if (!user) {
+          return res.status(404).send({
+            success: false,
+            message: "User not found",
+          });
+        }
+
+        res.send({
+          success: true,
+          data: user,
+        });
+      } catch (error) {
+        console.error(error);
+        res.status(500).send({
+          success: false,
+          message: "Failed to fetch user",
+        });
+      }
+    });
+
+    app.patch("/api/users/:id/plan", async (req, res) => {
+      try {
+        const { id } = req.params;
+        const { planId } = req.body;
+
+        if (!planId) {
+          return res.status(400).send({
+            success: false,
+            message: "planId is required",
+          });
+        }
+
+        const result = await userCollection.updateOne(
+          { _id: new ObjectId(id) },
+          {
+            $set: {
+              plan: planId,
+              updatedAt: new Date(),
+            },
+          },
+        );
+
+        if (result.matchedCount === 0) {
+          return res.status(404).send({
+            success: false,
+            message: "User not found",
+          });
+        }
+
+        res.send({
+          success: true,
+          message: "User plan updated successfully",
+        });
+      } catch (error) {
+        console.error(error);
+        res.status(500).send({
+          success: false,
+          message: "Failed to update plan",
+        });
+      }
+    });
+
     // Order api
     app.post("/api/orders", async (req, res) => {
       try {
@@ -338,7 +410,6 @@ async function run() {
       }
     });
 
-  
     app.get("/api/orders/:id", async (req, res) => {
       try {
         const { id } = req.params;
@@ -505,6 +576,139 @@ async function run() {
         res.status(500).send({
           success: false,
           message: "Failed to delete comment",
+        });
+      }
+    });
+
+    // Plans api
+
+    app.get("/api/plans", async (req, res) => {
+      try {
+        const { planId } = req.query;
+
+        if (planId) {
+          const plan = await planCollection.findOne({ planId });
+
+          if (!plan) {
+            return res.status(404).send({ error: "Plan not found" });
+          }
+
+          return res.send(plan);
+        }
+
+        // যদি planId না থাকে → সব plans
+        const result = await planCollection.find().toArray();
+        res.send(result);
+      } catch (error) {
+        res.status(500).send({ error: "Server error" });
+      }
+    });
+
+    app.post("/api/plan-purchases", async (req, res) => {
+      try {
+        const purchase = req.body;
+
+        if (!purchase.buyerId || !purchase.planId) {
+          return res.status(400).send({
+            success: false,
+            message: "userId and planId are required",
+          });
+        }
+
+        purchase.createdAt = new Date();
+        purchase.status = purchase.status || "active";
+
+        const result = await planPurchaseCollection.insertOne(purchase);
+
+        res.send({
+          success: true,
+          message: "Plan purchased successfully",
+          insertedId: result.insertedId,
+        });
+      } catch (error) {
+        console.error(error);
+        res.status(500).send({
+          success: false,
+          message: "Failed to purchase plan",
+        });
+      }
+    });
+
+    app.get("/api/plan-purchases", async (req, res) => {
+      try {
+        const { userId, artistId, planId } = req.query;
+
+        const query = {};
+
+        if (userId) query.userId = userId;
+        if (artistId) query.artistId = artistId;
+        if (planId) query.planId = planId;
+
+        const result = await planPurchaseCollection
+          .find(query)
+          .sort({ createdAt: -1 })
+          .toArray();
+
+        res.send({
+          success: true,
+          count: result.length,
+          data: result,
+        });
+      } catch (error) {
+        console.error(error);
+        res.status(500).send({
+          success: false,
+          message: "Failed to fetch plan purchases",
+        });
+      }
+    });
+
+    app.get("/api/plan-purchases/:id", async (req, res) => {
+      try {
+        const { id } = req.params;
+
+        const result = await planPurchaseCollection.findOne({
+          _id: new ObjectId(id),
+        });
+
+        if (!result) {
+          return res.status(404).send({
+            success: false,
+            message: "Plan purchase not found",
+          });
+        }
+
+        res.send({
+          success: true,
+          data: result,
+        });
+      } catch (error) {
+        console.error(error);
+        res.status(500).send({
+          success: false,
+          message: "Failed to fetch plan purchase",
+        });
+      }
+    });
+
+    app.get("/api/plan-purchases/check", async (req, res) => {
+      try {
+        const { userId, planId } = req.query;
+
+        const existing = await planPurchaseCollection.findOne({
+          userId,
+          planId,
+          paymentStatus: "paid",
+        });
+
+        res.send({
+          success: true,
+          exists: !!existing,
+        });
+      } catch (error) {
+        res.status(500).send({
+          success: false,
+          message: "Failed to check plan purchase",
         });
       }
     });
