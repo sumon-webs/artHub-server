@@ -1,6 +1,6 @@
 const express = require("express");
 const app = express();
-const port = 5000;
+const port = process.env.PORT || 5000;
 const dotenv = require("dotenv").config();
 const cors = require("cors");
 
@@ -68,7 +68,18 @@ async function run() {
 
     app.get("/api/artworks", async (req, res) => {
       try {
-        const { artistId, category, search, sortByPrice } = req.query;
+        const {
+          page = 1,
+          limit = 9,
+          artistId,
+          category,
+          search,
+          sortByPrice,
+        } = req.query;
+
+        
+
+        const skip = Number(page - 1) * Number(limit);
 
         const query = {};
 
@@ -97,6 +108,8 @@ async function run() {
 
         const artworks = await artworkCollection
           .find(query)
+          .skip(skip)
+          .limit(Number(limit))
           .sort(sortOption)
           .toArray();
 
@@ -153,11 +166,9 @@ async function run() {
     app.delete("/api/artworks/:id", async (req, res) => {
       try {
         const { id } = req.params;
-        const { artistId } = req.body;
 
         const result = await artworkCollection.deleteOne({
           _id: new ObjectId(id),
-          artistId: artistId,
         });
 
         if (result.deletedCount === 0) {
@@ -348,6 +359,60 @@ async function run() {
         res.status(500).send({
           success: false,
           message: "Failed to update plan",
+        });
+      }
+    });
+
+    app.patch("/api/users/:id/role", async (req, res) => {
+      try {
+        const { id } = req.params;
+        const { role } = req.body;
+
+        const validRoles = ["buyer", "artist", "admin"];
+
+        if (!role || !validRoles.includes(role)) {
+          return res.status(400).send({
+            success: false,
+            message: "Invalid role",
+          });
+        }
+
+        const rolePlanMap = {
+          buyer: "buyer-free",
+          artist: "artist-free",
+        };
+
+        const plan = rolePlanMap[role];
+
+        const result = await userCollection.updateOne(
+          { _id: new ObjectId(id) },
+          {
+            $set: {
+              role,
+              plan,
+              updatedAt: new Date(),
+            },
+          },
+        );
+
+        if (result.matchedCount === 0) {
+          return res.status(404).send({
+            success: false,
+            message: "User not found",
+          });
+        }
+
+        res.send({
+          success: true,
+          message: "User role and plan updated successfully",
+          data: { role, plan },
+        });
+      } catch (error) {
+        console.error(error);
+
+        res.status(500).send({
+          success: false,
+          message: "Failed to update role",
         });
       }
     });
@@ -709,6 +774,57 @@ async function run() {
         res.status(500).send({
           success: false,
           message: "Failed to check plan purchase",
+        });
+      }
+    });
+
+    // Stats api
+    // Dashboard Stats API
+    app.get("/api/stats", async (req, res) => {
+      try {
+        // Total Users
+        const totalUsers = await userCollection.countDocuments();
+
+        // Total Artists
+        const totalArtists = await userCollection.countDocuments({
+          role: "artist",
+        });
+
+        // Total Artworks Sold
+        const totalArtworksSold = await orderCollection.countDocuments();
+
+        // Total Revenue
+        const revenueResult = await orderCollection
+          .aggregate([
+            {
+              $group: {
+                _id: null,
+                totalRevenue: {
+                  $sum: { $toDouble: "$price" },
+                },
+              },
+            },
+          ])
+          .toArray();
+
+        const totalRevenue =
+          revenueResult.length > 0 ? revenueResult[0].totalRevenue : 0;
+
+        res.send({
+          success: true,
+          data: {
+            totalUsers,
+            totalArtists,
+            totalArtworksSold,
+            totalRevenue,
+          },
+        });
+      } catch (error) {
+        console.error(error);
+
+        res.status(500).send({
+          success: false,
+          message: "Failed to fetch dashboard stats",
         });
       }
     });
