@@ -77,9 +77,11 @@ async function run() {
           sortByPrice,
         } = req.query;
 
-        
+        console.log("hit", category, search, sortByPrice)
 
-        const skip = Number(page - 1) * Number(limit);
+        const pageNum = Number(page);
+        const limitNum = Number(limit);
+        const skip = (pageNum - 1) * limitNum;
 
         const query = {};
 
@@ -98,7 +100,7 @@ async function run() {
           ];
         }
 
-        let sortOption = { createdAt: -1 }; // default newest first
+        let sortOption = { createdAt: -1 };
 
         if (sortByPrice === "asc") {
           sortOption = { price: 1 };
@@ -106,17 +108,31 @@ async function run() {
           sortOption = { price: -1 };
         }
 
+        // 🔥 total count (pagination er main part)
+        const total = await artworkCollection.countDocuments(query);
+
         const artworks = await artworkCollection
           .find(query)
           .skip(skip)
-          .limit(Number(limit))
+          .limit(limitNum)
           .sort(sortOption)
           .toArray();
 
+        const totalPages = Math.ceil(total / limitNum);
+
         res.send({
           success: true,
-          count: artworks.length,
           data: artworks,
+
+          
+          pagination: {
+            total,
+            page: pageNum,
+            limit: limitNum,
+            totalPages,
+            hasNextPage: pageNum < totalPages,
+            hasPrevPage: pageNum > 1,
+          },
         });
       } catch (error) {
         console.error(error);
