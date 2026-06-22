@@ -27,9 +27,9 @@ const client = new MongoClient(uri, {
 async function run() {
   try {
     // Connect the client to the server	(optional starting in v4.7)
-    await client.connect();
+    // await client.connect();
     // Send a ping to confirm a successful connection
-    await client.db("admin").command({ ping: 1 });
+    // await client.db("admin").command({ ping: 1 });
 
     const myDB = client.db("arts-hub");
     const artworkCollection = myDB.collection("artworks");
@@ -47,6 +47,7 @@ async function run() {
 
     const verifyToken = async (req, res, next) => {
       const authHeader = req.headers.authorization;
+
       if (!authHeader) {
         return res.status(401).json({
           success: false,
@@ -87,6 +88,15 @@ async function run() {
       next();
     };
 
+    const verifyBuyer = async (req, res, next) => {
+      if (!req.user.role === "buyer") {
+        return res.status(401).json({
+          success: false,
+          message: "Forbidden",
+        });
+      }
+      next();
+    };
     const verifyArtist = async (req, res, next) => {
       if (!req.user.role === "artist") {
         return res.status(401).json({
@@ -236,41 +246,46 @@ async function run() {
       }
     });
 
-    app.patch("/api/artworks/:id", async (req, res) => {
-      try {
-        const { id } = req.params;
-        const updateData = req.body;
+    app.patch(
+      "/api/artworks/:id",
+      verifyToken,
+      verifyArtist,
+      async (req, res) => {
+        try {
+          const { id } = req.params;
+          const updateData = req.body;
 
-        const result = await artworkCollection.updateOne(
-          { _id: new ObjectId(id) },
-          {
-            $set: {
-              ...updateData,
-              updatedAt: new Date(),
+          const result = await artworkCollection.updateOne(
+            { _id: new ObjectId(id) },
+            {
+              $set: {
+                ...updateData,
+                updatedAt: new Date(),
+              },
             },
-          },
-        );
+          );
 
-        if (result.matchedCount === 0) {
-          return res.status(404).send({
+          if (result.matchedCount === 0) {
+            return res.status(404).send({
+              success: false,
+              message: "Artwork not found",
+            });
+          }
+
+          res.send({
+            success: true,
+            message: "Artwork updated successfully",
+            modifiedCount: result.modifiedCount,
+          });
+        } catch (error) {
+          console.error(error);
+          res.status(500).send({
             success: false,
-            message: "Artwork not found",
+            message: "Failed to update artwork",
           });
         }
-
-        res.send({
-          success: true,
-          message: "Artwork updated successfully",
-          modifiedCount: result.modifiedCount,
-        });
-      } catch (error) {
-        console.error(error);
-        res.status(500).send({
-          success: false,
-          message: "Failed to update artwork",
-        });
-      }
-    });
+      },
+    );
 
     app.delete(
       "/api/artworks/:id",
@@ -408,6 +423,47 @@ async function run() {
       }
     });
 
+    app.patch("/api/users/:id/plan", async (req, res) => {
+      try {
+        const { id } = req.params;
+        const { planId } = req.body;
+
+        if (!planId) {
+          return res.status(400).send({
+            success: false,
+            message: "planId is required",
+          });
+        }
+
+        const result = await userCollection.updateOne(
+          { _id: new ObjectId(id) },
+          {
+            $set: {
+              plan: planId,
+              updatedAt: new Date(),
+            },
+          },
+        );
+
+        if (result.modifiedCount === 0) {
+          return res.status(404).send({
+            success: false,
+            message: "User not found or plan already set",
+          });
+        }
+
+        res.send({
+          success: true,
+          message: "Plan updated successfully",
+          data: result,
+        });
+      } catch (error) {
+        res.status(500).send({
+          success: false,
+          message: error.message || "Internal server error",
+        });
+      }
+    });
     app.get("/api/users/:id", async (req, res) => {
       try {
         const { id } = req.params;
@@ -519,17 +575,29 @@ async function run() {
       }
     });
 
-    app.get("/api/orders", async (req, res) => {
+    app.get("/api/orders", verifyToken, async (req, res) => {
       try {
         const { buyerId, artistId } = req.query;
 
         const query = {};
 
         if (buyerId) {
+          if (!req.user.role === "buyer") {
+            return res.status(401).json({
+              success: false,
+              message: "Forbidden",
+            });
+          }
           query.buyerId = buyerId;
         }
 
         if (artistId) {
+          if (!req.user.role === "artist") {
+            return res.status(401).json({
+              success: false,
+              message: "Forbidden",
+            });
+          }
           query.artistId = artistId;
         }
 
@@ -553,7 +621,7 @@ async function run() {
       }
     });
 
-    app.get("/api/orders/:id", async (req, res) => {
+    app.get("/api/orders/:id", verifyToken, verifyBuyer, async (req, res) => {
       try {
         const { id } = req.params;
 
@@ -670,7 +738,7 @@ async function run() {
     });
 
     // Comment api
-    app.post("/api/comments", async (req, res) => {
+    app.post("/api/comments", verifyToken, verifyBuyer, async (req, res) => {
       try {
         const comment = req.body;
 
@@ -700,16 +768,21 @@ async function run() {
       }
     });
 
-    app.get("/api/comments", async (req, res) => {
+    app.get("/api/comments", verifyToken, async (req, res) => {
       try {
         const { artworkId, userId } = req.query;
 
         const query = {};
-
         if (artworkId) {
           query.artworkId = artworkId;
         }
         if (userId) {
+          if (!req.user.role === "buyer") {
+            return res.status(401).json({
+              success: false,
+              message: "Forbidden",
+            });
+          }
           query.userId = userId;
         }
 
@@ -733,80 +806,90 @@ async function run() {
       }
     });
 
-    app.delete("/api/comments/:id", async (req, res) => {
-      try {
-        const { id } = req.params;
+    app.delete(
+      "/api/comments/:id",
+      verifyToken,
+      verifyBuyer,
+      async (req, res) => {
+        try {
+          const { id } = req.params;
 
-        const result = await commentCollection.deleteOne({
-          _id: new ObjectId(id),
-        });
+          const result = await commentCollection.deleteOne({
+            _id: new ObjectId(id),
+          });
 
-        if (result.deletedCount === 0) {
-          return res.status(404).send({
+          if (result.deletedCount === 0) {
+            return res.status(404).send({
+              success: false,
+              message: "Comment not found",
+            });
+          }
+
+          res.send({
+            success: true,
+            message: "Comment deleted successfully",
+          });
+        } catch (error) {
+          console.error(error);
+
+          res.status(500).send({
             success: false,
-            message: "Comment not found",
+            message: "Failed to delete comment",
           });
         }
-
-        res.send({
-          success: true,
-          message: "Comment deleted successfully",
-        });
-      } catch (error) {
-        console.error(error);
-
-        res.status(500).send({
-          success: false,
-          message: "Failed to delete comment",
-        });
-      }
-    });
+      },
+    );
 
     // Comment update api
-    app.patch("/api/comments/:id", async (req, res) => {
-      try {
-        const { id } = req.params;
-        const { text } = req.body;
+    app.patch(
+      "/api/comments/:id",
+      verifyToken,
+      verifyBuyer,
+      async (req, res) => {
+        try {
+          const { id } = req.params;
+          const { text } = req.body;
 
-        // validation
-        if (!text || !text.trim()) {
-          return res.status(400).send({
-            success: false,
-            message: "Comment text is required",
-          });
-        }
+          // validation
+          if (!text || !text.trim()) {
+            return res.status(400).send({
+              success: false,
+              message: "Comment text is required",
+            });
+          }
 
-        const result = await commentCollection.updateOne(
-          { _id: new ObjectId(id), userId: req.body.userId },
-          {
-            $set: {
-              text,
-              updatedAt: new Date(),
+          const result = await commentCollection.updateOne(
+            { _id: new ObjectId(id), userId: req.body.userId },
+            {
+              $set: {
+                text,
+                updatedAt: new Date(),
+              },
             },
-          },
-        );
+          );
 
-        if (result.matchedCount === 0) {
-          return res.status(404).send({
+          if (result.matchedCount === 0) {
+            return res.status(404).send({
+              success: false,
+              message: "Comment not found",
+            });
+          }
+
+          res.send({
+            success: true,
+            message: "Comment updated successfully",
+            modifiedCount: result.modifiedCount,
+          });
+        } catch (error) {
+          console.error(error);
+
+          res.status(500).send({
             success: false,
-            message: "Comment not found",
+            message: "Failed to update comment",
           });
         }
-
-        res.send({
-          success: true,
-          message: "Comment updated successfully",
-          modifiedCount: result.modifiedCount,
-        });
-      } catch (error) {
-        console.error(error);
-
-        res.status(500).send({
-          success: false,
-          message: "Failed to update comment",
-        });
-      }
-    });
+      },
+    );
 
     // Plans api
 
@@ -948,7 +1031,7 @@ async function run() {
 
     // Stats api
     // Dashboard Stats API
-    app.get("/api/stats", async (req, res) => {
+    app.get("/api/stats", verifyToken, verifyAdmin, async (req, res) => {
       try {
         // Total Users
         const totalUsers = await userCollection.countDocuments();
