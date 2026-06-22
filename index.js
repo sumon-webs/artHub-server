@@ -38,9 +38,66 @@ async function run() {
     const planPurchaseCollection = myDB.collection("planPurchases");
     const commentCollection = myDB.collection("comments");
     const planCollection = myDB.collection("plans");
+    const sessionCollection = myDB.collection("session");
 
+    app.get("/api/session", async (req, res) => {
+      const result = await sessionCollection.find().toArray();
+      res.send(result);
+    });
+
+    const verifyToken = async (req, res, next) => {
+      const authHeader = req.headers.authorization;
+      if (!authHeader) {
+        return res.status(401).json({
+          success: false,
+          message: "UnAuthorized",
+        });
+      }
+
+      const token = authHeader.split(" ")[1];
+      if (!token) {
+        return res.status(401).json({
+          success: false,
+          message: "Forbidden",
+        });
+      }
+
+      const session = await sessionCollection.findOne({ token });
+      const userId = session?.userId;
+      const user = await userCollection.findOne(userId);
+
+      if (!user) {
+        return res.status(401).json({
+          success: false,
+          message: "UnAuthorized",
+        });
+      }
+      req.user = user;
+
+      next();
+    };
+
+    const verifyAdmin = async (req, res, next) => {
+      if (!req.user.role === "admin") {
+        return res.status(401).json({
+          success: false,
+          message: "Forbidden",
+        });
+      }
+      next();
+    };
+
+    const verifyArtist = async (req, res, next) => {
+      if (!req.user.role === "artist") {
+        return res.status(401).json({
+          success: false,
+          message: "Forbidden",
+        });
+      }
+      next();
+    };
     // Artwork api
-    app.post("/api/artworks", async (req, res) => {
+    app.post("/api/artworks", verifyToken, async (req, res) => {
       try {
         const artwork = req.body;
 
@@ -77,7 +134,44 @@ async function run() {
           sortByPrice,
         } = req.query;
 
-        console.log("hit", category, search, sortByPrice)
+        if (artistId) {
+          const headers = req.headers.authorization;
+
+          if (!headers) {
+            return res.status(401).json({
+              success: false,
+              message: "UnAuthorized",
+            });
+          }
+          const token = headers?.split(" ")[1];
+          if (!token) {
+            return res.status(401).json({
+              success: false,
+              message: "UnAuthorized",
+            });
+          }
+
+          const session = await sessionCollection.findOne({ token });
+          const userId = session?.userId;
+          const user = await userCollection.findOne(userId);
+
+          if (!user) {
+            return res.status(401).json({
+              success: false,
+              message: "UnAuthorized",
+            });
+          }
+
+          const isValid =
+            user._id.toString() === artistId && user.role === "artist";
+
+          if (!isValid) {
+            return res.status(404).json({
+              success: false,
+              message: "forbidden",
+            });
+          }
+        }
 
         const pageNum = Number(page);
         const limitNum = Number(limit);
@@ -124,7 +218,6 @@ async function run() {
           success: true,
           data: artworks,
 
-          
           pagination: {
             total,
             page: pageNum,
@@ -179,35 +272,41 @@ async function run() {
       }
     });
 
-    app.delete("/api/artworks/:id", async (req, res) => {
-      try {
-        const { id } = req.params;
+    app.delete(
+      "/api/artworks/:id",
+      verifyToken,
+      verifyAdmin,
+      verifyArtist,
+      async (req, res) => {
+        try {
+          const { id } = req.params;
 
-        const result = await artworkCollection.deleteOne({
-          _id: new ObjectId(id),
-        });
+          const result = await artworkCollection.deleteOne({
+            _id: new ObjectId(id),
+          });
 
-        if (result.deletedCount === 0) {
-          return res.status(403).send({
+          if (result.deletedCount === 0) {
+            return res.status(403).send({
+              success: false,
+              message: "Not allowed or artwork not found",
+            });
+          }
+
+          res.send({
+            success: true,
+            message: "Artwork deleted successfully",
+            deletedCount: result.deletedCount,
+          });
+        } catch (error) {
+          console.error(error);
+
+          res.status(500).send({
             success: false,
-            message: "Not allowed or artwork not found",
+            message: "Failed to delete artwork",
           });
         }
-
-        res.send({
-          success: true,
-          message: "Artwork deleted successfully",
-          deletedCount: result.deletedCount,
-        });
-      } catch (error) {
-        console.error(error);
-
-        res.status(500).send({
-          success: false,
-          message: "Failed to delete artwork",
-        });
-      }
-    });
+      },
+    );
     app.get("/api/artworks/:id", async (req, res) => {
       try {
         const { id } = req.params;
@@ -284,7 +383,7 @@ async function run() {
     });
 
     // Users api
-    app.get("/api/users", async (req, res) => {
+    app.get("/api/users", verifyToken, async (req, res) => {
       try {
         const { role } = req.query;
 
@@ -337,101 +436,64 @@ async function run() {
       }
     });
 
-    app.patch("/api/users/:id/plan", async (req, res) => {
-      try {
-        const { id } = req.params;
-        const { planId } = req.body;
+    app.patch(
+      "/api/users/:id/role",
+      verifyToken,
+      verifyAdmin,
+      async (req, res) => {
+        try {
+          const { id } = req.params;
+          const { role } = req.body;
 
-        if (!planId) {
-          return res.status(400).send({
-            success: false,
-            message: "planId is required",
-          });
-        }
+          const validRoles = ["buyer", "artist", "admin"];
 
-        const result = await userCollection.updateOne(
-          { _id: new ObjectId(id) },
-          {
-            $set: {
-              plan: planId,
-              updatedAt: new Date(),
+          if (!role || !validRoles.includes(role)) {
+            return res.status(400).send({
+              success: false,
+              message: "Invalid role",
+            });
+          }
+
+          const rolePlanMap = {
+            buyer: "buyer-free",
+            artist: "artist-free",
+          };
+
+          const plan = rolePlanMap[role];
+
+          const result = await userCollection.updateOne(
+            { _id: new ObjectId(id) },
+            {
+              $set: {
+                role,
+                plan,
+                updatedAt: new Date(),
+              },
             },
-          },
-        );
+          );
 
-        if (result.matchedCount === 0) {
-          return res.status(404).send({
+          if (result.matchedCount === 0) {
+            return res.status(404).send({
+              success: false,
+              message: "User not found",
+            });
+          }
+
+          res.send({
+            success: true,
+            message: "User role and plan updated successfully",
+            data: { role, plan },
+          });
+        } catch (error) {
+          console.error(error);
+
+          res.status(500).send({
             success: false,
-            message: "User not found",
+            message: "Failed to update role",
           });
         }
-
-        res.send({
-          success: true,
-          message: "User plan updated successfully",
-        });
-      } catch (error) {
-        console.error(error);
-        res.status(500).send({
-          success: false,
-          message: "Failed to update plan",
-        });
-      }
-    });
-
-    app.patch("/api/users/:id/role", async (req, res) => {
-      try {
-        const { id } = req.params;
-        const { role } = req.body;
-
-        const validRoles = ["buyer", "artist", "admin"];
-
-        if (!role || !validRoles.includes(role)) {
-          return res.status(400).send({
-            success: false,
-            message: "Invalid role",
-          });
-        }
-
-        const rolePlanMap = {
-          buyer: "buyer-free",
-          artist: "artist-free",
-        };
-
-        const plan = rolePlanMap[role];
-
-        const result = await userCollection.updateOne(
-          { _id: new ObjectId(id) },
-          {
-            $set: {
-              role,
-              plan,
-              updatedAt: new Date(),
-            },
-          },
-        );
-
-        if (result.matchedCount === 0) {
-          return res.status(404).send({
-            success: false,
-            message: "User not found",
-          });
-        }
-
-        res.send({
-          success: true,
-          message: "User role and plan updated successfully",
-          data: { role, plan },
-        });
-      } catch (error) {
-        console.error(error);
-
-        res.status(500).send({
-          success: false,
-          message: "Failed to update role",
-        });
-      }
-    });
+      },
+    );
 
     // Order api
     app.post("/api/orders", async (req, res) => {
@@ -528,6 +590,42 @@ async function run() {
         const matchStage = {};
 
         if (artistId) {
+          const headers = req.headers.authorization;
+
+          if (!headers) {
+            return res.status(401).json({
+              success: false,
+              message: "UnAuthorized",
+            });
+          }
+          const token = headers?.split(" ")[1];
+          if (!token) {
+            return res.status(401).json({
+              success: false,
+              message: "UnAuthorized",
+            });
+          }
+
+          const session = await sessionCollection.findOne({ token });
+          const userId = session?.userId;
+          const user = await userCollection.findOne(userId);
+
+          if (!user) {
+            return res.status(401).json({
+              success: false,
+              message: "UnAuthorized",
+            });
+          }
+
+          const isValid =
+            user._id.toString() === artistId && user.role === "artist";
+
+          if (!isValid) {
+            return res.status(404).json({
+              success: false,
+              message: "forbidden",
+            });
+          }
           matchStage.artistId = artistId;
         }
 
@@ -604,12 +702,15 @@ async function run() {
 
     app.get("/api/comments", async (req, res) => {
       try {
-        const { artworkId } = req.query;
+        const { artworkId, userId } = req.query;
 
         const query = {};
 
         if (artworkId) {
           query.artworkId = artworkId;
+        }
+        if (userId) {
+          query.userId = userId;
         }
 
         const comments = await commentCollection
@@ -657,6 +758,52 @@ async function run() {
         res.status(500).send({
           success: false,
           message: "Failed to delete comment",
+        });
+      }
+    });
+
+    // Comment update api
+    app.patch("/api/comments/:id", async (req, res) => {
+      try {
+        const { id } = req.params;
+        const { text } = req.body;
+
+        // validation
+        if (!text || !text.trim()) {
+          return res.status(400).send({
+            success: false,
+            message: "Comment text is required",
+          });
+        }
+
+        const result = await commentCollection.updateOne(
+          { _id: new ObjectId(id), userId: req.body.userId },
+          {
+            $set: {
+              text,
+              updatedAt: new Date(),
+            },
+          },
+        );
+
+        if (result.matchedCount === 0) {
+          return res.status(404).send({
+            success: false,
+            message: "Comment not found",
+          });
+        }
+
+        res.send({
+          success: true,
+          message: "Comment updated successfully",
+          modifiedCount: result.modifiedCount,
+        });
+      } catch (error) {
+        console.error(error);
+
+        res.status(500).send({
+          success: false,
+          message: "Failed to update comment",
         });
       }
     });
@@ -715,34 +862,39 @@ async function run() {
       }
     });
 
-    app.get("/api/plan-purchases", async (req, res) => {
-      try {
-        const { userId, artistId, planId } = req.query;
+    app.get(
+      "/api/plan-purchases",
+      verifyToken,
+      verifyAdmin,
+      async (req, res) => {
+        try {
+          const { userId, artistId, planId } = req.query;
 
-        const query = {};
+          const query = {};
 
-        if (userId) query.userId = userId;
-        if (artistId) query.artistId = artistId;
-        if (planId) query.planId = planId;
+          if (userId) query.userId = userId;
+          if (artistId) query.artistId = artistId;
+          if (planId) query.planId = planId;
 
-        const result = await planPurchaseCollection
-          .find(query)
-          .sort({ createdAt: -1 })
-          .toArray();
+          const result = await planPurchaseCollection
+            .find(query)
+            .sort({ createdAt: -1 })
+            .toArray();
 
-        res.send({
-          success: true,
-          count: result.length,
-          data: result,
-        });
-      } catch (error) {
-        console.error(error);
-        res.status(500).send({
-          success: false,
-          message: "Failed to fetch plan purchases",
-        });
-      }
-    });
+          res.send({
+            success: true,
+            count: result.length,
+            data: result,
+          });
+        } catch (error) {
+          console.error(error);
+          res.status(500).send({
+            success: false,
+            message: "Failed to fetch plan purchases",
+          });
+        }
+      },
+    );
 
     app.get("/api/plan-purchases/:id", async (req, res) => {
       try {
